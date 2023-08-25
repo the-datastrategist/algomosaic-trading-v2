@@ -1,0 +1,254 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: extract-ticker-pipeline-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.3.0, pipelines.kubeflow.org/pipeline_compilation_time: '2021-01-26T00:11:12.978388',
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "Extracts OHLCV data from
+      Cryptocompare API.", "inputs": [{"name": "ticker", "type": "String"}, {"name":
+      "start_date", "optional": true, "type": "String"}, {"name": "end_date", "optional":
+      true, "type": "String"}, {"name": "project_id", "optional": true, "type": "String"},
+      {"name": "destination_table", "optional": true, "type": "String"}, {"name":
+      "if_exists", "optional": true, "type": "String"}, {"name": "interval", "optional":
+      true, "type": "String"}, {"name": "exchange", "optional": true, "type": "String"},
+      {"name": "date_range", "optional": true, "type": "Integer"}], "name": "extract_ticker_pipeline"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.3.0}
+spec:
+  entrypoint: extract-ticker-pipeline
+  templates:
+  - name: extract-ticker
+    container:
+      args: [--ticker, /tmp/inputs/ticker/data]
+      command:
+      - sh
+      - -ec
+      - |
+        program_path=$(mktemp)
+        echo -n "$0" > "$program_path"
+        python3 -u "$program_path" "$@"
+      - "def extract_ticker(\n    ticker,\n    start_date = None,\n    end_date =\
+        \ None,\n    project_id = None,\n    destination_table = None,\n    if_exists\
+        \ = None,\n    interval = None,\n    exchange = None,\n    date_range = None,\n\
+        \    rate_limit = None,\n):\n    import datetime as dt\n    from datetime\
+        \ import timedelta\n    import requests\n    import pandas as pd\n    import\
+        \ pandas_gbq as gbq\n    import numpy as np\n\n    # Initialize parameters;\
+        \ handle args as needed\n    start_date = start_date or (dt.datetime.now()\
+        \ - timedelta(days=date_range)).strftime(\"%Y-%m-%d %H:%M:%S\")\n    end_date\
+        \ = end_date or dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')\n    project_id\
+        \ = project_id or PROJECT_ID\n    destination_table = destination_table or\
+        \ DESTINATION_TABLE.format(\n        exchange=exchange,\n        ticker=ticker.replace('-',\
+        \ '_'),\n        interval=interval\n    )\n    if_exists = if_exists or 'replace'\n\
+        \    date_range = date_range or DATE_RANGE\n    interval = interval or 'hour'\n\
+        \    exchange = exchange or EXCHANGE\n    rate_limit = rate_limit or RATE_LIMIT\n\
+        \n    def datetime_to_sec(datetime):\n        # Convert a datetime or date\
+        \ (string) to milliseconds (int).\n        # Returns: seconds timestamp for\
+        \ corresponding datetime. \n        sec = None\n        is_formatted = False\n\
+        \        dt_formats = [\n            # datetime formats\n            '%Y%m%d_%H%M%S',\n\
+        \            '%Y/%m/%d %H:%M:%S',\n            '%Y-%m-%d %H:%M:%S',\n    \
+        \        '%Y.%m.%d %H:%M:%S',\n            # date formats\n            '%Y%m%d',\n\
+        \            '%Y/%m/%d',\n            '%Y-%m-%d',\n            '%Y.%m.%d']\n\
+        \n        # Loop through potential datetime format types\n        for dt_format\
+        \ in dt_formats:\n            try:\n                dt_obj = dt.datetime.strptime(datetime,\
+        \ dt_format)\n                sec = int(dt_obj.timestamp())\n            except\
+        \ ValueError:\n                continue\n        if not sec:\n           \
+        \ print('Must provide a valid datetime string format.')\n        return sec\
+        \ \n\n    def sec_to_datetime(ms, dt_format=None):\n        # Convert a second\
+        \ (int) to a datetime (date or string).\n        # Returns: milliseconds timestamp\
+        \ for corresponding datetime.\n        datetime = dt.datetime.fromtimestamp(ms)\n\
+        \        if dt_format:\n            return datetime.strftime(dt_format)\n\
+        \        else:\n            return datetime\n\n    def get_sec_interval_list(\n\
+        \            start_date,\n            end_date,\n            interval,\n \
+        \           rate_limit=RATE_LIMIT\n    ):\n        interval_dict = {\n   \
+        \         'day': 24 * 60 * 60,\n            'hour': 60 * 60,\n           \
+        \ 'minute': 60,\n        }\n        dt_interval = interval_dict[interval]\n\
+        \        end_ms = datetime_to_sec(end_date)\n        start_ms = datetime_to_sec(start_date)\n\
+        \n        # Take the earliest timestamp in the date range\n        dt_list\
+        \ = [end_ms]\n        dt_i = end_ms - (rate_limit * dt_interval)\n\n     \
+        \   # Add each datetime interval and subtract the desired time period\n  \
+        \      while dt_i > start_ms:\n            dt_list = dt_list + [dt_i]\n  \
+        \          dt_i = dt_i - (rate_limit * dt_interval)\n            next\n  \
+        \      return dt_list\n\n    def _get_cryptocompare_data(\n        ticker,\n\
+        \        start_date,\n        end_date,\n        interval,\n        exchange,\n\
+        \        rate_limit=RATE_LIMIT\n    ):\n        # Loop through each date range\
+        \ and extract OHLCV data\n        dt_interval_list = get_sec_interval_list(start_date,\
+        \ end_date, interval)\n        base_asset = ticker.split('-')[0]\n       \
+        \ quote_asset = ticker.split('-')[1]\n        data = []\n        for i, dt_interval\
+        \ in enumerate(dt_interval_list):\n            print(\"Extracting {} of {}:\
+        \ {} up to {}\".format(\n                i+1, len(dt_interval_list), ticker,\
+        \ sec_to_datetime(dt_interval)\n            ))\n            url = 'https://min-api.cryptocompare.com/data/histo{}'.format(interval)\
+        \ +\\\n                    '?fsym={}'.format(base_asset) +\\\n           \
+        \         '&tsym={}'.format(quote_asset) +\\\n                    '&e={}'.format(exchange)\
+        \ +\\\n                    '&limit={}'.format(rate_limit) +\\\n          \
+        \          '&aggregate=1' +\\\n                    '&toTs={}'.format(dt_interval)\n\
+        \            response = requests.get(url)\n            data_tmp = response.json()['Data']\n\
+        \            data = data + (data_tmp if isinstance(data_tmp, list) else [data_tmp])\n\
+        \n        # Once all ranges are collected, convert to dataframe\n        df\
+        \ = pd.DataFrame(data)\n        df.drop_duplicates(subset=['time'], inplace=True)\n\
+        \        df.dropna(subset=['time'], inplace=True)\n        return df\n\n \
+        \   def _adjust_ticker_data(df, ticker, interval, exchange):\n        df =\
+        \ df.rename(columns={\n            'volumefrom': 'volume_base',\n        \
+        \    'volumeto': 'volume',\n            'time': 'ticker_time_sec'})\n\n  \
+        \      # Add relevant metadata\n        df['partition_date'] = dt.datetime.now().strftime(\"\
+        %Y-%m-%d\")\n        df['etl_time'] = dt.datetime.now()\n        df['ticker_time']\
+        \ = [sec_to_datetime(m) for m in df['ticker_time_sec']]\n        df['ticker']\
+        \ = ticker\n        df['interval'] = interval\n        df['exchange'] = exchange\n\
+        \n        # Sort and structure data\n        df = df.sort_values(by='ticker_time',\
+        \ ascending=False)\n        df = df.reset_index().drop('index', axis=1)\n\
+        \        return df\n\n    # Extract cryptocompare data\n    print('RUNNING:\
+        \ Extracting data for {} from Cryptocompare API'.format(ticker))\n    df =\
+        \ _get_cryptocompare_data(\n        ticker=ticker,\n        start_date=start_date,\n\
+        \        end_date=end_date,\n        interval=interval,\n        exchange=exchange,\n\
+        \        rate_limit=rate_limit\n    )\n\n    # Make adjustments to output\
+        \ table\n    print('RUNNING: Adjusting data for {}'.format(ticker))\n    df\
+        \ = _adjust_ticker_data(\n        df=df,\n        ticker=ticker,\n       \
+        \ interval=interval,\n        exchange=exchange\n    )\n\n    # Load to BigQuery\n\
+        \    print('RUNNING: Loading data for {} to {}.{}.'.format(ticker, project_id,\
+        \ destination_table))\n    df.to_gbq(\n        destination_table=destination_table,\n\
+        \        project_id=project_id,\n        if_exists=if_exists\n    )\n\nimport\
+        \ argparse\n_parser = argparse.ArgumentParser(prog='Extract ticker', description='')\n\
+        _parser.add_argument(\"--ticker\", dest=\"ticker\", type=str, required=True,\
+        \ default=argparse.SUPPRESS)\n_parser.add_argument(\"--start-date\", dest=\"\
+        start_date\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"\
+        --end-date\", dest=\"end_date\", type=str, required=False, default=argparse.SUPPRESS)\n\
+        _parser.add_argument(\"--project-id\", dest=\"project_id\", type=str, required=False,\
+        \ default=argparse.SUPPRESS)\n_parser.add_argument(\"--destination-table\"\
+        , dest=\"destination_table\", type=str, required=False, default=argparse.SUPPRESS)\n\
+        _parser.add_argument(\"--if-exists\", dest=\"if_exists\", type=str, required=False,\
+        \ default=argparse.SUPPRESS)\n_parser.add_argument(\"--interval\", dest=\"\
+        interval\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"\
+        --exchange\", dest=\"exchange\", type=str, required=False, default=argparse.SUPPRESS)\n\
+        _parser.add_argument(\"--date-range\", dest=\"date_range\", type=str, required=False,\
+        \ default=argparse.SUPPRESS)\n_parser.add_argument(\"--rate-limit\", dest=\"\
+        rate_limit\", type=str, required=False, default=argparse.SUPPRESS)\n_parsed_args\
+        \ = vars(_parser.parse_args())\n\n_outputs = extract_ticker(**_parsed_args)\n"
+      image: python:3.7
+    inputs:
+      artifacts:
+      - {name: ticker, path: /tmp/inputs/ticker/data}
+    metadata:
+      annotations: {pipelines.kubeflow.org/component_spec: '{"implementation": {"container":
+          {"args": ["--ticker", {"inputPath": "ticker"}, {"if": {"cond": {"isPresent":
+          "start_date"}, "then": ["--start-date", {"inputPath": "start_date"}]}},
+          {"if": {"cond": {"isPresent": "end_date"}, "then": ["--end-date", {"inputPath":
+          "end_date"}]}}, {"if": {"cond": {"isPresent": "project_id"}, "then": ["--project-id",
+          {"inputPath": "project_id"}]}}, {"if": {"cond": {"isPresent": "destination_table"},
+          "then": ["--destination-table", {"inputPath": "destination_table"}]}}, {"if":
+          {"cond": {"isPresent": "if_exists"}, "then": ["--if-exists", {"inputPath":
+          "if_exists"}]}}, {"if": {"cond": {"isPresent": "interval"}, "then": ["--interval",
+          {"inputPath": "interval"}]}}, {"if": {"cond": {"isPresent": "exchange"},
+          "then": ["--exchange", {"inputPath": "exchange"}]}}, {"if": {"cond": {"isPresent":
+          "date_range"}, "then": ["--date-range", {"inputPath": "date_range"}]}},
+          {"if": {"cond": {"isPresent": "rate_limit"}, "then": ["--rate-limit", {"inputPath":
+          "rate_limit"}]}}], "command": ["sh", "-ec", "program_path=$(mktemp)\necho
+          -n \"$0\" > \"$program_path\"\npython3 -u \"$program_path\" \"$@\"\n", "def
+          extract_ticker(\n    ticker,\n    start_date = None,\n    end_date = None,\n    project_id
+          = None,\n    destination_table = None,\n    if_exists = None,\n    interval
+          = None,\n    exchange = None,\n    date_range = None,\n    rate_limit =
+          None,\n):\n    import datetime as dt\n    from datetime import timedelta\n    import
+          requests\n    import pandas as pd\n    import pandas_gbq as gbq\n    import
+          numpy as np\n\n    # Initialize parameters; handle args as needed\n    start_date
+          = start_date or (dt.datetime.now() - timedelta(days=date_range)).strftime(\"%Y-%m-%d
+          %H:%M:%S\")\n    end_date = end_date or dt.datetime.now().strftime(''%Y-%m-%d
+          %H:%M:%S'')\n    project_id = project_id or PROJECT_ID\n    destination_table
+          = destination_table or DESTINATION_TABLE.format(\n        exchange=exchange,\n        ticker=ticker.replace(''-'',
+          ''_''),\n        interval=interval\n    )\n    if_exists = if_exists or
+          ''replace''\n    date_range = date_range or DATE_RANGE\n    interval = interval
+          or ''hour''\n    exchange = exchange or EXCHANGE\n    rate_limit = rate_limit
+          or RATE_LIMIT\n\n    def datetime_to_sec(datetime):\n        # Convert a
+          datetime or date (string) to milliseconds (int).\n        # Returns: seconds
+          timestamp for corresponding datetime. \n        sec = None\n        is_formatted
+          = False\n        dt_formats = [\n            # datetime formats\n            ''%Y%m%d_%H%M%S'',\n            ''%Y/%m/%d
+          %H:%M:%S'',\n            ''%Y-%m-%d %H:%M:%S'',\n            ''%Y.%m.%d
+          %H:%M:%S'',\n            # date formats\n            ''%Y%m%d'',\n            ''%Y/%m/%d'',\n            ''%Y-%m-%d'',\n            ''%Y.%m.%d'']\n\n        #
+          Loop through potential datetime format types\n        for dt_format in dt_formats:\n            try:\n                dt_obj
+          = dt.datetime.strptime(datetime, dt_format)\n                sec = int(dt_obj.timestamp())\n            except
+          ValueError:\n                continue\n        if not sec:\n            print(''Must
+          provide a valid datetime string format.'')\n        return sec \n\n    def
+          sec_to_datetime(ms, dt_format=None):\n        # Convert a second (int) to
+          a datetime (date or string).\n        # Returns: milliseconds timestamp
+          for corresponding datetime.\n        datetime = dt.datetime.fromtimestamp(ms)\n        if
+          dt_format:\n            return datetime.strftime(dt_format)\n        else:\n            return
+          datetime\n\n    def get_sec_interval_list(\n            start_date,\n            end_date,\n            interval,\n            rate_limit=RATE_LIMIT\n    ):\n        interval_dict
+          = {\n            ''day'': 24 * 60 * 60,\n            ''hour'': 60 * 60,\n            ''minute'':
+          60,\n        }\n        dt_interval = interval_dict[interval]\n        end_ms
+          = datetime_to_sec(end_date)\n        start_ms = datetime_to_sec(start_date)\n\n        #
+          Take the earliest timestamp in the date range\n        dt_list = [end_ms]\n        dt_i
+          = end_ms - (rate_limit * dt_interval)\n\n        # Add each datetime interval
+          and subtract the desired time period\n        while dt_i > start_ms:\n            dt_list
+          = dt_list + [dt_i]\n            dt_i = dt_i - (rate_limit * dt_interval)\n            next\n        return
+          dt_list\n\n    def _get_cryptocompare_data(\n        ticker,\n        start_date,\n        end_date,\n        interval,\n        exchange,\n        rate_limit=RATE_LIMIT\n    ):\n        #
+          Loop through each date range and extract OHLCV data\n        dt_interval_list
+          = get_sec_interval_list(start_date, end_date, interval)\n        base_asset
+          = ticker.split(''-'')[0]\n        quote_asset = ticker.split(''-'')[1]\n        data
+          = []\n        for i, dt_interval in enumerate(dt_interval_list):\n            print(\"Extracting
+          {} of {}: {} up to {}\".format(\n                i+1, len(dt_interval_list),
+          ticker, sec_to_datetime(dt_interval)\n            ))\n            url =
+          ''https://min-api.cryptocompare.com/data/histo{}''.format(interval) +\\\n                    ''?fsym={}''.format(base_asset)
+          +\\\n                    ''&tsym={}''.format(quote_asset) +\\\n                    ''&e={}''.format(exchange)
+          +\\\n                    ''&limit={}''.format(rate_limit) +\\\n                    ''&aggregate=1''
+          +\\\n                    ''&toTs={}''.format(dt_interval)\n            response
+          = requests.get(url)\n            data_tmp = response.json()[''Data'']\n            data
+          = data + (data_tmp if isinstance(data_tmp, list) else [data_tmp])\n\n        #
+          Once all ranges are collected, convert to dataframe\n        df = pd.DataFrame(data)\n        df.drop_duplicates(subset=[''time''],
+          inplace=True)\n        df.dropna(subset=[''time''], inplace=True)\n        return
+          df\n\n    def _adjust_ticker_data(df, ticker, interval, exchange):\n        df
+          = df.rename(columns={\n            ''volumefrom'': ''volume_base'',\n            ''volumeto'':
+          ''volume'',\n            ''time'': ''ticker_time_sec''})\n\n        # Add
+          relevant metadata\n        df[''partition_date''] = dt.datetime.now().strftime(\"%Y-%m-%d\")\n        df[''etl_time'']
+          = dt.datetime.now()\n        df[''ticker_time''] = [sec_to_datetime(m) for
+          m in df[''ticker_time_sec'']]\n        df[''ticker''] = ticker\n        df[''interval'']
+          = interval\n        df[''exchange''] = exchange\n\n        # Sort and structure
+          data\n        df = df.sort_values(by=''ticker_time'', ascending=False)\n        df
+          = df.reset_index().drop(''index'', axis=1)\n        return df\n\n    # Extract
+          cryptocompare data\n    print(''RUNNING: Extracting data for {} from Cryptocompare
+          API''.format(ticker))\n    df = _get_cryptocompare_data(\n        ticker=ticker,\n        start_date=start_date,\n        end_date=end_date,\n        interval=interval,\n        exchange=exchange,\n        rate_limit=rate_limit\n    )\n\n    #
+          Make adjustments to output table\n    print(''RUNNING: Adjusting data for
+          {}''.format(ticker))\n    df = _adjust_ticker_data(\n        df=df,\n        ticker=ticker,\n        interval=interval,\n        exchange=exchange\n    )\n\n    #
+          Load to BigQuery\n    print(''RUNNING: Loading data for {} to {}.{}.''.format(ticker,
+          project_id, destination_table))\n    df.to_gbq(\n        destination_table=destination_table,\n        project_id=project_id,\n        if_exists=if_exists\n    )\n\nimport
+          argparse\n_parser = argparse.ArgumentParser(prog=''Extract ticker'', description='''')\n_parser.add_argument(\"--ticker\",
+          dest=\"ticker\", type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--start-date\",
+          dest=\"start_date\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--end-date\",
+          dest=\"end_date\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--project-id\",
+          dest=\"project_id\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--destination-table\",
+          dest=\"destination_table\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--if-exists\",
+          dest=\"if_exists\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--interval\",
+          dest=\"interval\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--exchange\",
+          dest=\"exchange\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--date-range\",
+          dest=\"date_range\", type=str, required=False, default=argparse.SUPPRESS)\n_parser.add_argument(\"--rate-limit\",
+          dest=\"rate_limit\", type=str, required=False, default=argparse.SUPPRESS)\n_parsed_args
+          = vars(_parser.parse_args())\n\n_outputs = extract_ticker(**_parsed_args)\n"],
+          "image": "python:3.7"}}, "inputs": [{"name": "ticker", "type": "String"},
+          {"name": "start_date", "optional": true, "type": "String"}, {"name": "end_date",
+          "optional": true, "type": "String"}, {"name": "project_id", "optional":
+          true, "type": "String"}, {"name": "destination_table", "optional": true,
+          "type": "String"}, {"name": "if_exists", "optional": true, "type": "String"},
+          {"name": "interval", "optional": true, "type": "String"}, {"name": "exchange",
+          "optional": true, "type": "String"}, {"name": "date_range", "optional":
+          true, "type": "Integer"}, {"name": "rate_limit", "optional": true, "type":
+          "Integer"}], "name": "Extract ticker"}', pipelines.kubeflow.org/component_ref: '{}'}
+  - name: extract-ticker-pipeline
+    inputs:
+      artifacts:
+      - {name: ticker}
+    dag:
+      tasks:
+      - name: extract-ticker
+        template: extract-ticker
+        arguments:
+          artifacts:
+          - {name: ticker, from: '{{inputs.artifacts.ticker}}'}
+  arguments:
+    parameters:
+    - {name: ticker}
+    - {name: start_date}
+    - {name: end_date}
+    - {name: project_id}
+    - {name: destination_table}
+    - {name: if_exists}
+    - {name: interval}
+    - {name: exchange}
+    - {name: date_range}
+    artifacts:
+    - name: ticker
+      raw: {data: '{{workflow.parameters.ticker}}'}
+  serviceAccountName: pipeline-runner
